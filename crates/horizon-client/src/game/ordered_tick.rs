@@ -113,6 +113,7 @@ impl Game<'_> {
             (self.ordered.done, self.ordered.born, self.ordered.announced);
         let wanted = |j: JoinSeq| done.is_none_or(|d| j > d) && j < cut && j < born;
         let mut pending: Vec<(JoinSeq, Pending)> = Vec::new();
+        let mut dead_orbs: Vec<JoinSeq> = Vec::new();
         let mut offer = |j: JoinSeq, kind: Pending| {
             // Orbs are announced after their tick, always; TNT and falling
             // blocks that joined since the last packets wait for them.
@@ -203,10 +204,13 @@ impl Game<'_> {
                     let snow = (o.previous, o.position, o.bounds(), o.velocity);
                     self.entity_powder_snow_particles(snow.0, snow.1, snow.2, snow.3, false);
                     if !stays {
-                        self.orbs.remove(i);
+                        dead_orbs.push(join);
                     }
                 }
             }
+        }
+        if !dead_orbs.is_empty() {
+            self.orbs.retain(|o| !dead_orbs.contains(&o.join));
         }
         if events && let Err(e) = self.process_level_events() {
             first_error.get_or_insert(e);

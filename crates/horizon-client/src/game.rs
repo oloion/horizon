@@ -14429,26 +14429,83 @@ impl Game<'_> {
     /// it absorbs the orbs that `canMerge` within 0.5 blocks of its box,
     /// adding their counts and keeping the smaller age. Server only.
     fn merge_orbs(&mut self) {
-        let mut removed = vec![false; self.orbs.len()];
-        for i in 0..self.orbs.len() {
-            if removed[i] || self.orbs[i].ticks % 20 != 1 {
-                continue;
+        let n = self.orbs.len();
+        if n <= 1 {
+            return;
+        }
+        let mut removed = vec![false; n];
+        if n < 24 {
+            for i in 0..n {
+                if removed[i] || self.orbs[i].ticks % 20 != 1 {
+                    continue;
+                }
+                let area = self.orbs[i].bounds().inflate(Vec3::new(0.5, 0.5, 0.5));
+                for j in 0..n {
+                    if j == i || removed[j] || !self.orbs[j].bounds().intersects(area) {
+                        continue;
+                    }
+                    let (a, b) = (&self.orbs[i], &self.orbs[j]);
+                    let vanilla = b.can_merge(a.id, a.value);
+                    let (into, into_value, from, from_value) = (a.id, a.value, b.id, b.value);
+                    if !self.orb_merges(into, into_value, from, from_value, vanilla) {
+                        continue;
+                    }
+                    let (count, age) = (self.orbs[j].count, self.orbs[j].age);
+                    self.orbs[i].count = self.orbs[i].count.saturating_add(count);
+                    self.orbs[i].age = self.orbs[i].age.min(age);
+                    removed[j] = true;
+                }
             }
-            let area = self.orbs[i].bounds().inflate(Vec3::new(0.5, 0.5, 0.5));
-            for j in 0..self.orbs.len() {
-                if j == i || removed[j] || !self.orbs[j].bounds().intersects(area) {
+        } else {
+            let cell_coord = |v: f64| -> i32 { (v * 0.5).floor() as i32 };
+            let mut grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
+                std::collections::HashMap::with_capacity(n);
+            for (idx, orb) in self.orbs.iter().enumerate() {
+                let key = (
+                    cell_coord(orb.position.x),
+                    cell_coord(orb.position.y),
+                    cell_coord(orb.position.z),
+                );
+                grid.entry(key).or_default().push(idx);
+            }
+
+            let mut candidates = Vec::with_capacity(64);
+            for i in 0..n {
+                if removed[i] || self.orbs[i].ticks % 20 != 1 {
                     continue;
                 }
-                let (a, b) = (&self.orbs[i], &self.orbs[j]);
-                let vanilla = b.can_merge(a.id, a.value);
-                let (into, into_value, from, from_value) = (a.id, a.value, b.id, b.value);
-                if !self.orb_merges(into, into_value, from, from_value, vanilla) {
-                    continue;
+                let area = self.orbs[i].bounds().inflate(Vec3::new(0.5, 0.5, 0.5));
+                let cx = cell_coord(self.orbs[i].position.x);
+                let cy = cell_coord(self.orbs[i].position.y);
+                let cz = cell_coord(self.orbs[i].position.z);
+
+                candidates.clear();
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            if let Some(indices) = grid.get(&(cx + dx, cy + dy, cz + dz)) {
+                                candidates.extend_from_slice(indices);
+                            }
+                        }
+                    }
                 }
-                let (count, age) = (self.orbs[j].count, self.orbs[j].age);
-                self.orbs[i].count = self.orbs[i].count.saturating_add(count);
-                self.orbs[i].age = self.orbs[i].age.min(age);
-                removed[j] = true;
+                candidates.sort_unstable();
+
+                for &j in &candidates {
+                    if j == i || removed[j] || !self.orbs[j].bounds().intersects(area) {
+                        continue;
+                    }
+                    let (a, b) = (&self.orbs[i], &self.orbs[j]);
+                    let vanilla = b.can_merge(a.id, a.value);
+                    let (into, into_value, from, from_value) = (a.id, a.value, b.id, b.value);
+                    if !self.orb_merges(into, into_value, from, from_value, vanilla) {
+                        continue;
+                    }
+                    let (count, age) = (self.orbs[j].count, self.orbs[j].age);
+                    self.orbs[i].count = self.orbs[i].count.saturating_add(count);
+                    self.orbs[i].age = self.orbs[i].age.min(age);
+                    removed[j] = true;
+                }
             }
         }
         let mut removed = removed.into_iter();
@@ -14604,22 +14661,26 @@ impl Game<'_> {
         let mut orbs = std::mem::take(&mut self.orbs);
         let mut gained = 0;
         let mut taken = Vec::new();
-        if let Some((min, max)) = bounds {
+        if let Some((min, max)) = bounds
+            && self.xp_delay == 0
+        {
+            let mut picked = false;
             orbs.retain_mut(|o| {
-                let touching = o.position.x + 0.25 > min[0]
-                    && o.position.x - 0.25 < max[0]
-                    && o.position.y + 0.5 > min[1]
-                    && o.position.y < max[1]
-                    && o.position.z + 0.25 > min[2]
-                    && o.position.z - 0.25 < max[2];
-                if touching && self.xp_delay == 0 {
-                    // ExperienceOrb.playerTouch: one orb every 2 ticks; a
-                    // merged orb gives its value once per count.
-                    self.xp_delay = 2;
-                    gained += o.value;
-                    taken.push(o.clone());
-                    o.count -= 1;
-                    return o.count > 0;
+                if !picked {
+                    let touching = o.position.x + 0.25 > min[0]
+                        && o.position.x - 0.25 < max[0]
+                        && o.position.y + 0.5 > min[1]
+                        && o.position.y < max[1]
+                        && o.position.z + 0.25 > min[2]
+                        && o.position.z - 0.25 < max[2];
+                    if touching {
+                        picked = true;
+                        self.xp_delay = 2;
+                        gained += o.value;
+                        taken.push(o.clone());
+                        o.count -= 1;
+                        return o.count > 0;
+                    }
                 }
                 true
             });
