@@ -1658,11 +1658,17 @@ impl Game<'_> {
     }
     /// AbstractBoatRenderer.
     pub(super) fn boat_geometry(&self, camera: glam::DVec3, alpha: f64, out: &mut Vec<Vertex>) {
+        if self.boats.is_empty() {
+            return;
+        }
         let a = alpha as f32;
         let range = super::entity_culling::default_range(
             glam::DVec3::new(WIDTH, HEIGHT, WIDTH),
             self.view_scale(),
         );
+        let mut poses = Poses::pooled();
+        let mut patch_poses = Option::<horizon_client::mobs::anim::PooledPoses>::None;
+        let mut sprite = String::with_capacity(32);
         for b in &self.boats {
             // LevelExtractor: the camera entity is not drawn from its own eyes.
             if self.hides_as_camera(b.id) {
@@ -1689,12 +1695,18 @@ impl Game<'_> {
             let Some(model) = models.get(&*b.wood) else {
                 continue;
             };
-            let folder = if b.chest { "chest_boat" } else { "boat" };
+            sprite.clear();
+            sprite.push_str(if b.chest {
+                "entity/chest_boat/"
+            } else {
+                "entity/boat/"
+            });
+            sprite.push_str(&b.wood);
             let Some(uv) = self
                 .gui
                 .atlas
                 .sprites
-                .get(&format!("entity/{folder}/{}", b.wood))
+                .get(sprite.as_str())
                 .map(|r| [r.u0, r.v0, r.u1, r.v1])
             else {
                 continue;
@@ -1727,7 +1739,7 @@ impl Game<'_> {
             }
             base *= glam::Mat4::from_scale(glam::Vec3::new(-1.0, -1.0, 1.0))
                 * glam::Mat4::from_rotation_y(90f32.to_radians());
-            let mut poses = Poses::new(model);
+            poses.reset(model);
             // AbstractBoatModel.animatePaddle
             for (side, name) in [(0usize, "left_paddle"), (1, "right_paddle")] {
                 if !poses.has(name) {
@@ -1771,10 +1783,15 @@ impl Game<'_> {
                     let (u, v) = ((r.u0 + r.u1) / 2.0, (r.v0 + r.v1) / 2.0);
                     [u, v, u, v]
                 });
+                let pp = patch_poses.get_or_insert_with(|| {
+                    let mut p = Poses::pooled();
+                    p.reset(patch);
+                    p
+                });
                 horizon_client::mobs::render::draw(
                     patch,
                     base,
-                    &Poses::new(patch),
+                    pp,
                     white,
                     0xFFFF_FFFF,
                     packed,
