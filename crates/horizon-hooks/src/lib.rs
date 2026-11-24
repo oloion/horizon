@@ -17,8 +17,10 @@
 //! pages, [`hud`] for what it draws on the HUD, [`lang`] for the lang files with its text.
 #![forbid(unsafe_code)]
 
+pub mod actions;
 pub mod hud;
 pub mod lang;
+pub mod mod_links;
 pub mod pages;
 pub mod perf;
 pub mod players;
@@ -110,6 +112,14 @@ pub trait Hooks: Sync {
     fn get_the_game(&self) -> Option<GetTheGame> {
         None
     }
+
+    /// Whether the player whose turn it is sees their own name over their head in third person,
+    /// as other players see it (Horizon's own name tag). Asked each frame name tags are drawn;
+    /// the engine shows it when any hook says so, and still never in first person, asleep, as a
+    /// spectator or while invisible.
+    fn own_name_tag(&self) -> bool {
+        false
+    }
 }
 
 /// What [`Hooks::get_the_game`] answers. The texts are translation keys of the game's own strings
@@ -170,6 +180,8 @@ pub enum Dimension {
     Overworld,
     Nether,
     End,
+    /// A custom dimension, with no private identifier published.
+    Other,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,6 +259,7 @@ pub mod engine {
     /// registration ends.
     pub fn seal() {
         all();
+        crate::actions::all();
         crate::settings::all();
         crate::pages::engine::all();
         crate::hud::engine::all();
@@ -372,6 +385,11 @@ pub mod engine {
     pub fn get_the_game() -> Option<GetTheGame> {
         all().iter().find_map(|hooks| hooks.get_the_game())
     }
+
+    /// [`Hooks::own_name_tag`]: whether any hook says so.
+    pub fn own_name_tag() -> bool {
+        all().iter().any(|hooks| hooks.own_name_tag())
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +411,9 @@ mod tests {
         }
         fn published(&self, open: bool) {
             self.0.lock().unwrap().push(format!("published {open}"));
+        }
+        fn shutdown(&self) {
+            self.0.lock().unwrap().push("shutdown".into());
         }
         fn activity(&self, now: Activity) {
             self.0.lock().unwrap().push(format!("{now:?}"));
@@ -640,6 +661,7 @@ mod tests {
                 "published false",
                 "Menus",
                 "World { play: Singleplayer, dimension: Nether, mode: Creative }",
+                "shutdown",
                 "frame 4"
             ]
         );
