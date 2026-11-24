@@ -904,8 +904,10 @@ impl Game<'_> {
         (-1..=1).all(|dx| (-1..=1).all(|dz| world.loaded(origin[0] + dx, origin[2] + dz)))
     }
 
-    fn tick_pending_gateways(&mut self) -> Result<()> {
-        if self.end.pending_gateways.is_empty() {
+    /// Places the queued gateways whose footprint has loaded. The queue belongs
+    /// to the End's fight, so only the level with that fight drains it.
+    pub(super) fn tick_pending_gateways(&mut self) -> Result<()> {
+        if self.end.pending_gateways.is_empty() || !self.dimension_type().has_ender_dragon_fight {
             return Ok(());
         }
         let pending = std::mem::take(&mut self.end.pending_gateways);
@@ -2243,3 +2245,7 @@ mod tests {
 #[cfg(test)]
 #[path = "end/gateway_cooldown_tests.rs"]
 mod cooldown_tests;
+
+#[cfg(test)]
+#[path = "end/pending_gateway_tests.rs"]
+mod pending_gateway_tests;
